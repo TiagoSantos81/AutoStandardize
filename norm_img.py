@@ -342,6 +342,38 @@ def get_proportion(img, threshold = 125, debug = False):
 
     return prop
 
+def needs_rotation(template, img, threshold=125):
+    """ returns True if the target image needs a 90 flip """
+    # get objects boundaries
+    # cv.imshow("Template boundary", assure_gray_img(template)); cv.waitKey(0)
+    t_bound = find_boundaries(assure_gray_img(template), threshold)
+    # cv.imshow("Image boundary", assure_gray_img(img)); cv.waitKey(0)
+    i_bound = find_boundaries(assure_gray_img(img), threshold)
+
+    # get object lengths in each axis
+    t_x_len = (t_bound[3] - t_bound[2])
+    t_y_len = (t_bound[1] - t_bound[0])
+    i_x_len = (i_bound[3] - i_bound[2])
+    i_y_len = (i_bound[1] - i_bound[0])
+
+    # check horizontality
+    temp_horizontal = 1 if ( t_x_len / t_y_len ) > 1 else 0
+    img_horizontal  = 1 if ( i_x_len / i_y_len ) > 1 else 0
+
+    # debug
+    # if debug:
+    #     # cv.imshow("Template", template); cv.waitKey(0)
+    #     print("Template X:", t_x_len, "\nTemplate Y:", t_y_len)
+    #     # cv.imshow("Image", img); cv.waitKey(0)
+    #     print("Image X:", i_x_len, "\nImage Y:", i_y_len)
+    #     print()
+    #     print("temp_horizontal", temp_horizontal)
+    #     print("img_horizontal", img_horizontal)
+
+    needs_90_rot = temp_horizontal - img_horizontal
+
+    return needs_90_rot
+
 def get_ratio(template, img, threshold = 10):
     """ returns object proportion between two images """
     prop_template = get_proportion(template, threshold)
@@ -523,7 +555,7 @@ def resize_img(img, ratio = 1, dim_target = None, crop = True, debug = False):
 
     return img_out
 
-def correct_img(img, centering_vector, rotation = 0, resize_ratio = 1):
+def correct_img(img, centering_vector, rotation = 0, resize_ratio = 1, template = None):
     """ performs image corrections such as correction and resizing """
     # recenter image
     img_centered = move_segment(img, vector = centering_vector)
@@ -531,24 +563,34 @@ def correct_img(img, centering_vector, rotation = 0, resize_ratio = 1):
     # align image
     img_rotated = rotate(img_centered, rotation, debug = True)
 
+    # conform to template
+    if template.any() != None:
+
+        # get need for orientation correction
+        needs_rot = needs_rotation(template, img_rotated)
+
+        # # correct for inversions and PC1 and PC2 reversals
+        # quadrants_ref   = np.argmin(find_img_quadrants(template))
+        # quadrants_final = np.argmin(find_img_quadrants(img_rotated))
+
+        if needs_rotation != 0 :
+            img_rotated = rotate(img_rotated, 90 * needs_rot, debug = False)
+            if debug : print("Image rotated", 90 * needs_rot, " degrees")
+
     # make object the same size as reference object
     img_final = resize_img(img_rotated, ratio = resize_ratio,
-                           dim_target = (template.shape[1], template.shape[0]),
-                           crop = True, debug = False)
-
-    # correct for inversions and PC1 and PC2 reversals
-    quadrants_ref   = np.argmin(find_img_quadrants(template))
-    quadrants_final = np.argmin(find_img_quadrants(img_final))
-
-    # img_final=rotate(img_final, -90*)
-
+                        dim_target = (template.shape[1], template.shape[0]),
+                        crop = True, debug = False)
 
     show_img(img_final, "Transformed result")
 
-    pass
+    return img_final, needs_rot * 90
 
 def display_analisys(img, rot_deg):
     """ displays rotation analisys """
+    # avout destructive edits with putText() and line()
+    img_orig = img.copy()
+
     cy, cx = img_center(img) # note - OpenCV uses inverted coordinates
     deltax, deltay = np.int(np.sin(np.deg2rad(rot_deg))*100), np.int(np.cos(np.deg2rad(rot_deg))*100)
 
@@ -557,6 +599,9 @@ def display_analisys(img, rot_deg):
     cv.line(img, (cx + deltax, cy + deltay), (cx - deltax, cy - deltay), (125,125,0))
 
     show_img(img, title='Result')
+
+    img = img_orig
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -585,7 +630,7 @@ if __name__ == "__main__":
                   # FIXME on real example is misaligned by two degrees, and it is often is 180 - theta
 
     # set run type
-    use_synthetic_example = True
+    use_synthetic_example = False
 
     # load image and process it
     if use_synthetic_example:
@@ -613,16 +658,16 @@ if __name__ == "__main__":
     orig_img = img.copy()
 
     # calculate orientation and offset
-    rot_deg, c_vector = find_orientation(img, debug = debug)
+    rot_deg, c_vector = find_orientation(orig_img, debug = debug)
 
     # display rotation and result
     if debug : display_analisys(img, rot_deg)
 
-    # get template/image resize ratio
-    ratio = get_ratio(template, img)
+    # make object the same size as reference object
+    resize_ratio = get_ratio(template, orig_img)
 
     # display corrected image
-    correct_img(orig_img, c_vector, -rot_deg, ratio)
+    img_final, needs_rot = correct_img(orig_img, c_vector, -rot_deg, resize_ratio = resize_ratio, template = template)
 
     # close all OpenCV windows
     cv.destroyAllWindows()
@@ -630,7 +675,7 @@ if __name__ == "__main__":
     ############## tests #############
 
     # confirm PCA provided angles
-    assert np.abs(rotation - rot_deg) < 3 or np.abs(180 - rotation - rot_deg) < 3 ,\
+    assert np.abs(rotation - rot_deg + needs_rot) < 3 or np.abs(180 - rotation - rot_deg + needs_rot) < 3 ,\
         print(f"\n ERROR: PCA detected rotation, {rot_deg} is different from provided rotation {rotation} or {180+rotation}")
         # algo cannot yet recognize direction
 
