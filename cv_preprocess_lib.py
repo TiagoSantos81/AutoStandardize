@@ -36,6 +36,7 @@ import pandas as pd
 from scipy.spatial import distance
 from scipy import fftpack as fft
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 import sklearn as sk
 from sklearn.decomposition import PCA
@@ -165,7 +166,10 @@ def remove_background(img, background, show = True, video = False, debug = True)
     for i in range(0,img.shape[0]):
         for j in range(0,img.shape[1]):
             if img[i][j] == background[i][j]:
-                img_out[i][j] = 0
+                if has_color(img):
+                    img_out[i][j] = (img[0][0][0], img[0][0][1], img[0][0][2])
+                else:
+                    img_out[i][j] = 0
             else:
                 img_out[i][j] = img[i][j]
 
@@ -497,19 +501,118 @@ def needs_rotation(template, img, threshold=125):
     temp_horizontal = 1 if ( t_x_len / t_y_len ) > 1 else 0
     img_horizontal  = 1 if ( i_x_len / i_y_len ) > 1 else 0
 
-    # debug
-    # if debug:
-    #     # cv.imshow("Template", template); cv.waitKey(0)
-    #     print("Template X:", t_x_len, "\nTemplate Y:", t_y_len)
-    #     # cv.imshow("Image", img); cv.waitKey(0)
-    #     print("Image X:", i_x_len, "\nImage Y:", i_y_len)
-    #     print()
-    #     print("temp_horizontal", temp_horizontal)
-    #     print("img_horizontal", img_horizontal)
-
     needs_90_rot = temp_horizontal - img_horizontal
 
     return needs_90_rot
+
+def calculate_gradients(img, debug = False):
+    """ calculates average horizontal and vertical intensities of the image
+    and compares intensity across quadrants to get the right orientation """
+
+    # convert to grayscale
+    img_gray = assure_gray_img(img)
+
+    # get average for each row and column
+    ravgs = np.float32(cv.reduce(img_gray, 1, cv.REDUCE_AVG, cv.CV_32S))
+    cavgs = np.float32(cv.reduce(img_gray, 0, cv.REDUCE_AVG, cv.CV_32S))
+
+    # print(ravgs.T)
+
+    # get gradients
+    rdiffs = np.diff(ravgs, axis=0)
+    cdiffs = np.diff(cavgs, axis=1).T
+
+    # calcute difference between sections
+    vseg   = np.average(ravgs[:ravgs.shape[0]//2])
+    vseg_2 = np.average(ravgs[ravgs.shape[0]//2:])
+    hseg   = np.average(cavgs.T[:cavgs.shape[1]//2])
+    hseg_2 = np.average(cavgs.T[cavgs.shape[1]//2:])
+
+    # calcute difference between sections
+    hgrad   = "left" if hseg >= hseg_2 else "right"
+    vgrad   = "up"   if vseg >= vseg_2 else "down"
+
+    if debug:
+        print(hgrad, vgrad)
+        print(hseg, hseg_2, vseg, vseg_2)
+
+    return hgrad, vgrad
+
+def orientate(img, template, debug = False):
+    """ determines if the image has the right orientation based on image quandrants intensity """
+    img_h, img_v = calculate_gradients(assure_gray_img(img), debug = debug) # FIXME need to add image recenterint to preprocessing
+    img2_h, img2_v = calculate_gradients(assure_gray_img(template), debug = debug)
+    if img_h != img2_h and img_v != img2_v:
+        img_rotated = rotate(img, angle = 180, rot_point = None, debug = False)
+
+        if debug:
+            print("Image reoriented")
+            show_img(img_rotated, title='Image Reoriented')
+    else:
+        img_rotated = img.copy()
+
+    return img_rotated
+
+def find_img_quadrants(img):
+    """ returns an ordered list of image quadrants, sorted by their proportions """
+    # find image center
+    cx, cy = find_center(img)
+
+    # split quadrants by image center
+    quadrants = []
+
+    quadrants.append(img[:cy, cx:])    # quad I
+    quadrants.append(img[:cy, :cx])    # quad II
+    quadrants.append(img[cy:, :cx])    # quad III
+    quadrants.append(img[cy:, cx:])    # quad IV
+
+    # find quadrant proportions
+    prop_list = []
+
+    for quadrant in quadrants:
+        prop_list.append(np.round(get_proportion(quadrant, threshold = 0), decimals = 3))
+        # NOTE round proportion to avoid pixelwise errors
+        # centered images have all the same proporttions
+    if debug : print(prop_list)
+
+    # calculate proportions
+    prop_list_order = [1, 2, 3, 4]
+
+    for i in range(0, 3) :
+        for j in range(1, 4) :
+            if prop_list[i] > prop_list[j]:
+                temp = prop_list[i]
+                prop_list[i] = prop_list[j]
+                prop_list[j] = temp
+
+    if debug: print(prop_list_order)
+
+    return prop_list, prop_list_order
+
+def find_orientation(img, threshold = None, preprocessed = False, c_vector = None, debug = False):
+    """ finds the orientation given an image """
+
+    # get segment raster positions
+    obj_pos_matrix, c_vector = get_segment_poss(img, threshold = threshold, preprocessed = preprocessed, c_vector = c_vector, debug = debug)
+
+    # make PCA on the image to get vectors of major change (PCA's eigenvectors)
+    pca = PCA(n_components=2)
+    pca.fit(obj_pos_matrix)
+
+    # assign PC1 eigenvector values
+    # print(pca.components_)
+    x, y = pca.components_[0,0], pca.components_[1,0] # first value of each row is PC1
+    # print(pca.components_)
+
+    # debug string
+    if debug : print(x,y, -y/x) # for a 45º rotation, x and y should be the same
+
+    # maths reference https://stats.stackexchange.com/questions/239959/how-to-obtain-the-angle-of-rotation-produced-by-a-pca-on-a-2d-dataset
+    rot_rad = -np.arctan(y/x)
+    rot_deg = np.round(90 - (rot_rad/(np.pi*2))*360, decimals=0)
+    if debug : print(f"Rotation angle is:\t {np.int(rot_deg)}º") # sometimes it finds the perpendicular angle
+
+    return rot_deg, c_vector
 
 def get_proportion(img, threshold = 125, debug = False):
     """ gets the proportion of pixels above a threshold in a rectangular matrix """
@@ -545,3 +648,129 @@ def get_ratio(template, img, threshold = 20, debug = True):
 
     return (prop_template ** (1/2)) / (prop_img ** (1/2))
 
+
+def find_n_axis(img, contour = None, center = None, debug = False):
+    """ returns the number of axis of simmetry of the image """
+    # NOTE check also http://www.cse.psu.edu/~yul11/CourseFall2006_files/loy_eccv2006.pdf
+    #      code in https://github.com/dramenti/symmetry
+
+    # initialize
+    if contour is None :
+        contour = find_best_contour(img, debug = False)
+        if debug :
+            print("No contour passed")
+            print(contour)
+    else:
+        if debug :
+            print("Contour passed\n", contour)
+        else:
+            pass
+
+    # create image
+    # centered_img = preprocess_img(img, debug = False)
+    # contour_img = cv.drawContours(cv.cvtColor(centered_img ,cv.COLOR_GRAY2RGB), contour, -1, (0,255,0), 3)
+    contour_img = cv.drawContours(cv.cvtColor(img, cv.COLOR_GRAY2BGR), contour, -1, (0,255,0), 3)
+
+    # set center
+    if center :
+        print(center)
+        cx, cy = center
+    else:
+        cx, cy = center = find_center(img)
+
+    # calculate list with distances to each external countour point
+    dist_list = []
+    angle_list = []
+    for edge in contour:
+        # print(center, edge)
+        dist_list.append(distance.euclidean(center, *edge))
+        angle_list.append(calculate_angle(center, *edge))
+        lists_merged = zip(center, edge)
+        # print(lists_merged)
+    sort_angles = sorted(zip(angle_list, dist_list), key=lambda x: x[0])
+
+    # sort list by angle
+    dist_list = []
+    angle_list = []
+    for angle, dist in sort_angles:
+        dist_list.append(dist)
+        angle_list.append(angle)
+        lists_merged = zip(center, edge)
+
+    # calculate mean angle step
+    angle_1 = angle_list[1:]
+    angle_2 = angle_list[:-1]
+    angle_diffs = [angle_1 - angle_2 for angle_1, angle_2 in zip(angle_1, angle_2)]
+    mean_angle = np.mean(angle_diffs)
+
+    # Fourier transform the distance versus angle function to get the period of the contour
+    # based on https://scipy-lectures.org/intro/scipy/auto_examples/solutions/plot_periodicity_finder.html
+
+    # calculate Fourier transform and FT frequencies
+    ft = fft.fft(dist_list, axis = 0)
+    ft_freqs = fft.fftfreq(n = len(dist_list), d = mean_angle)
+
+    # fix for div by 0 in ft_periods
+    ft_freqs_2 = np.where(0, 1e-20, ft_freqs)
+
+    # calculate function period
+    ft_periods = 1 / ft_freqs_2
+
+    # crop negative angles and first value since it has border condition bias in their calculations
+    # print(ft_periods)
+    ft_cropped = ft[1:len(ft)//2]
+    ft_periods_cropped = ft_periods[1:len(ft)//2]
+
+    # get the angular period
+    prob_period = ft_periods_cropped[np.argmax(np.abs(ft_cropped))]
+    print("Angular Period", prob_period)
+
+    # get number of simmetry angles
+    n_axis = np.int(360/prob_period)
+    n_axis = n_axis // 2 if n_axis % 2 == 0 else n_axis
+
+    print("Probable number of axis:", n_axis)
+
+    if debug:
+        print("Mean angle step:", mean_angle)
+        #     print(dist_list)
+        #     print(angle_list)
+        # print("Sorted_angles list\n\n" , sort_angles)
+
+        # debug period
+        # print("length Periods", len(ft_periods), "Max Periods", max(ft_periods), ft_periods[np.argmax(ft)])
+
+        # pretify plots
+        sns.set_theme()
+        plt.rcParams["figure.figsize"] = (12, 6.75)
+        plt.rcParams["axes.titlesize"] = "large"
+        plt.rcParams["axes.labelsize"] = "medium"
+        plt.rcParams['font.family'] = 'serif'
+        plt.rcParams['font.sans-serif'] = ['Times New Roman']
+
+        # get most relevant period for FFT frequencies list
+        fig = plt.figure()
+        fig.set_tight_layout(tight=True)
+
+        # set subplots
+        ax1 = fig.add_subplot(211)
+        ax2 = fig.add_subplot(212)
+
+        # countour distance plot
+        s_contour = np.vstack((x.reshape(-1,2) for x in contour)) # https://stackoverflow.com/questions/52206407/simplify-getting-coordinates-from-cv2-findcontours
+        # print(s_contour)
+        ax1.plot(angle_list, dist_list, marker='o')
+        ax1.set(xlabel = 'Point in Countour List', ylabel = 'Euclidean Distance',
+                title = 'Countour Distance to Center Function')
+
+        # get most relevant period for FFT frequencies list
+        ax2.plot(ft_periods, abs(ft), marker='o')
+        ax2.set(xlim = (0, 360),
+                xlabel = 'Period (degrees)', ylabel = 'Power',
+                title = 'Relative Importance of Each Fourier Period')
+        plt.show()
+
+    cv.putText(contour_img, "  Image has a period of aprox. "+str(np.round(prob_period))+", which suggests "+ str(n_axis)+" axis.", (50, 50), cv.FONT_HERSHEY_PLAIN, 1, (255,118,106))
+    cv.imshow("Periodicity Analysis", contour_img.copy())
+
+    return n_axis, contour_img

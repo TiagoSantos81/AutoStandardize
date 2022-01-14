@@ -140,11 +140,13 @@ sidebar = html.Div(
                 dcc.Checklist(
                     id = 'cl-process',
                     options=[
-                        {'label': 'Match Size', 'value': 'Size'},
+                        {'label': 'Contrast Streching', 'value': 'Contrast'},
+                        {'label': 'Recenter Image', 'value': 'Center'},
                         {'label': 'Image Alignment', 'value': 'Align'},
                         {'label': 'Orientation Adjustment', 'value': 'Orientate'},
+                        {'label': 'Match Size', 'value': 'Size'},
                     ],
-                    value=['Size', 'Center', 'Align', 'Orientate'],
+                    value=['Contrast', 'Center', 'Align', 'Orientate', 'Size'],
                     style={'display':'inline-block', 'width':'45%', 'border':'2px grey solid'}
                 )
             ],
@@ -171,14 +173,25 @@ content =  html.Div(id = 'parent', children = [
                                             'marginLeft': 400, 'marginTop': 0, 'marginBottom':40}),
 
         # html.Img(id='image', style={'marginLeft':400, 'width': '300px', 'horizontal-align': 'center'}),
+        html.P("______________Template______________________Image to Load________________________Contrast Stretching_____________________Thresholding____________" ,
+                    className="lead", style = { 'textAlign':'left', "background-color": "#f8f9fa",
+                                                'marginLeft': 400, 'marginTop': 0, 'marginBottom':0}),
         html.Img(id='template-image', style={'marginLeft':400, 'width': '300px', 'horizontal-align': 'center'}),
         html.Img(id='image1', style={'marginLeft':15, 'width': '300px', 'horizontal-align': 'center'}),
         html.Img(id='image2', style={'marginLeft':15, 'width': '300px', 'horizontal-align': 'center'}),
         html.Img(id='image3', style={'marginLeft':15, 'width': '300px', 'horizontal-align': 'center'}),
+
+        html.P("______________Denoise____________________________Recenter__________________________Periodicity Analysis_____________________Fill Gaps_________________" ,
+                    className="lead", style = { 'textAlign':'left', "background-color": "#f8f9fa",
+                                                'marginLeft': 400, 'marginTop': 0, 'marginBottom':0}),
         html.Img(id='image4', style={'marginLeft':400, 'width': '300px', 'horizontal-align': 'center'}),
         html.Img(id='image5', style={'marginLeft':15, 'width': '300px', 'horizontal-align': 'center'}),
         html.Img(id='image6', style={'marginLeft':15, 'width': '300px', 'horizontal-align': 'center'}),
         html.Img(id='image7', style={'marginLeft':15, 'width': '300px', 'horizontal-align': 'center'}),
+
+        html.P("______Rotation Offset Analysis_____________________Result_________________" ,
+                    className="lead", style = { 'textAlign':'left', "background-color": "#f8f9fa",
+                                                'marginLeft': 400, 'marginTop': 0, 'marginBottom':0}),
         html.Img(id='image8', style={'marginLeft':400, 'width': '300px', 'horizontal-align': 'center'}),
         html.Img(id='image9', style={'marginLeft':15, 'width': '300px', 'horizontal-align': 'center'}),
         ]
@@ -382,20 +395,24 @@ def update_image_src_8(img, threshold, n_clicks):
 # image 7 updater - Correct Image
 @app.callback(
     dash.dependencies.Output('image9', 'src'),
-    [dash.dependencies.Input('image1', 'children'),
+    [dash.dependencies.Input('cl-process', 'value'),
+     dash.dependencies.Input('image1', 'children'),
      dash.dependencies.Input('image8', 'children'), # only for updating
      dash.dependencies.Input('template-dropdown', 'value'),
      dash.dependencies.Input('binarizer-slider', 'value'),
      dash.dependencies.Input('button-val', 'n_clicks'),])
-def update_image_src_9(img, _, template, threshold, n_clicks):
+def update_image_src_9(checklist, img, _, template, threshold, n_clicks):
     if n_clicks == 9:
         global c_vector
         global rot_deg
 
         orig_img = open_img('images/image1.png')
         template = open_img('images/'+ template)
+
+        print("####Checklist###", checklist)
+
         # display corrected image
-        img_final, needs_rot = correct_img(orig_img, c_vector, -rot_deg, template = template, debug = True, app = False)
+        img_final, needs_rot = correct_img(orig_img, c_vector, -rot_deg, template = template, debug = False, app = True, checklist = checklist)
         cv.imwrite('images/image7.png', img_final)
 
         return '/images/image7.png'
@@ -435,7 +452,7 @@ if __name__ == '__main__':
     webbrowser.open('http://127.0.0.1:'+str(port))
 
     # dash server
-    app.run_server(debug = True, port=port)
+    app.run_server(port=port)
 
 #######################################################################################################
 ###                                          Referrences                                            ###
