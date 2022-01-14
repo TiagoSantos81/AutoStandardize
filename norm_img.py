@@ -35,7 +35,6 @@ import pandas as pd
 from scipy.spatial import distance
 from scipy import fftpack as fft
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 import sklearn as sk
 from sklearn.decomposition import PCA
@@ -68,195 +67,12 @@ def create_dev_sample(rotation, shape = 'rectangle', height = 500, width = 500, 
     img = rotate(canvas, rotation)
 
     # save to disk dev sample
-    cv.imwrite('images /rect1.jpg', img)
+    cv.imwrite('images/rect1.jpg', img)
 
     # show created image
     show_img(img, 'Created Sample Image - Close to continue')
 
     return img
-
-def find_n_axis(img, contour = None, center = None):
-    """ returns the number of axis of simmetry of the image """
-    # NOTE check also http://www.cse.psu.edu/~yul11/CourseFall2006_files/loy_eccv2006.pdf
-    #      code in https://github.com/dramenti/symmetry
-
-    # initialize
-    if contour is None :
-        contour = find_best_contour(img, debug = False)
-        # if debug :
-        #     print("No contour passed")
-        #     print(contour)
-    # else:
-    #     print("Contour passed\n", contour)
-
-    # create image
-    # centered_img = preprocess_img(img, debug = False)
-    # contour_img = cv.drawContours(cv.cvtColor(centered_img ,cv.COLOR_GRAY2RGB), contour, -1, (0,255,0), 3)
-    contour_img = cv.drawContours(img, contour, -1, (0,255,0), 3)
-
-    # set center
-    if center :
-        print(center)
-        cx, cy = center
-    else:
-        cx, cy = center = find_center(img)
-
-    # calculate list with distances to each external countour point
-    dist_list = []
-    angle_list = []
-    for edge in contour:
-        # print(center, edge)
-        dist_list.append(distance.euclidean(center, *edge))
-        angle_list.append(calculate_angle(center, *edge))
-        lists_merged = zip(center, edge)
-        # print(lists_merged)
-    sort_angles = sorted(zip(angle_list, dist_list), key=lambda x: x[0])
-
-    # sort list by angle
-    dist_list = []
-    angle_list = []
-    for angle, dist in sort_angles:
-        dist_list.append(dist)
-        angle_list.append(angle)
-        lists_merged = zip(center, edge)
-
-    # calculate mean angle step
-    angle_1 = angle_list[1:]
-    angle_2 = angle_list[:-1]
-    angle_diffs = [angle_1 - angle_2 for angle_1, angle_2 in zip(angle_1, angle_2)]
-    mean_angle = np.mean(angle_diffs)
-
-    # Fourier transform the distance versus angle function to get the period of the contour
-    # based on https://scipy-lectures.org/intro/scipy/auto_examples/solutions/plot_periodicity_finder.html
-
-    # calculate Fourier transform and FT frequencies
-    ft = fft.fft(dist_list, axis = 0)
-    ft_freqs = fft.fftfreq(n = len(dist_list), d = mean_angle)
-
-    # fix for div by 0 in ft_periods
-    ft_freqs_2 = np.where(0, 1e-20, ft_freqs)
-
-    # calculate function period
-    ft_periods = 1 / ft_freqs_2
-
-    # crop negative angles and first value since it has border condition bias in their calculations
-    # print(ft_periods)
-    ft_cropped = ft[1:len(ft)//2]
-    ft_periods_cropped = ft_periods[1:len(ft)//2]
-
-    # get the angular period
-    prob_period = ft_periods_cropped[np.argmax(np.abs(ft_cropped))]
-    print("Angular Period", prob_period)
-
-    # get number of simmetry angles
-    n_axis = np.int(360/prob_period)
-    n_axis = n_axis // 2 if n_axis % 2 == 0 else n_axis
-
-    print("Probable number of axis:", n_axis)
-
-    if debug:
-        print("Mean angle step:", mean_angle)
-        #     print(dist_list)
-        #     print(angle_list)
-        # print("Sorted_angles list\n\n" , sort_angles)
-
-        # debug period
-        # print("length Periods", len(ft_periods), "Max Periods", max(ft_periods), ft_periods[np.argmax(ft)])
-
-        # pretify plots
-        sns.set_theme()
-        plt.rcParams["figure.figsize"] = (12, 6.75)
-        plt.rcParams["axes.titlesize"] = "large"
-        plt.rcParams["axes.labelsize"] = "medium"
-        plt.rcParams['font.family'] = 'serif'
-        plt.rcParams['font.sans-serif'] = ['Times New Roman']
-
-        # get most relevant period for FFT frequencies list
-        fig = plt.figure()
-        fig.set_tight_layout(tight=True)
-
-        # set subplots
-        ax1 = fig.add_subplot(211)
-        ax2 = fig.add_subplot(212)
-
-        # countour distance plot
-        s_contour = np.vstack((x.reshape(-1,2) for x in contour)) # https://stackoverflow.com/questions/52206407/simplify-getting-coordinates-from-cv2-findcontours
-        # print(s_contour)
-        ax1.plot(angle_list, dist_list, marker='o')
-        ax1.set(xlabel = 'Point in Countour List', ylabel = 'Euclidean Distance',
-                title = 'Countour Distance to Center Function')
-
-        # get most relevant period for FFT frequencies list
-        ax2.plot(ft_periods, abs(ft), marker='o')
-        ax2.set(xlim = (0, 360),
-                xlabel = 'Period (degrees)', ylabel = 'Power',
-                title = 'Relative Importance of Each Fourier Period')
-        plt.show()
-
-    cv.putText(contour_img, "  Image has a period of aprox. "+str(np.round(prob_period))+", which suggests "+ str(n_axis)+" axis.", (50, 50), cv.FONT_HERSHEY_PLAIN, 1, (255,118,106))
-
-    return n_axis, contour_img
-
-def find_orientation(img, threshold = None, preprocessed = False, c_vector = None, debug = False):
-    """ finds the orientation given an image """
-
-    # get segment raster positions
-    obj_pos_matrix, c_vector = get_segment_poss(img, threshold = threshold, preprocessed = preprocessed, c_vector = c_vector, debug = debug)
-
-    # make PCA on the image to get vectors of major change (PCA's eigenvectors)
-    pca = PCA(n_components=2)
-    pca.fit(obj_pos_matrix)
-
-    # assign PC1 eigenvector values
-    # print(pca.components_)
-    x, y = pca.components_[0,0], pca.components_[1,0] # first value of each row is PC1
-    # print(pca.components_)
-
-    # debug string
-    if debug : print(x,y, -y/x) # for a 45º rotation, x and y should be the same
-
-    # maths reference https://stats.stackexchange.com/questions/239959/how-to-obtain-the-angle-of-rotation-produced-by-a-pca-on-a-2d-dataset
-    rot_rad = -np.arctan(y/x)
-    rot_deg = np.round(90 - (rot_rad/(np.pi*2))*360, decimals=0)
-    if debug : print(f"Rotation angle is:\t {np.int(rot_deg)}º") # sometimes it finds the perpendicular angle
-
-    return rot_deg, c_vector
-
-def find_img_quadrants(img):
-    """ returns an ordered list of image quadrants, sorted by their proportions """
-    # find image center
-    cx, cy = find_center(img)
-
-    # split quadrants by image center
-    quadrants = []
-
-    quadrants.append(img[:cy, cx:])    # quad I
-    quadrants.append(img[:cy, :cx])    # quad II
-    quadrants.append(img[cy:, :cx])    # quad III
-    quadrants.append(img[cy:, cx:])    # quad IV
-
-    # find quadrant proportions
-    prop_list = []
-
-    for quadrant in quadrants:
-        prop_list.append(np.round(get_proportion(quadrant, threshold = 0), decimals = 3))
-        # NOTE round proportion to avoid pixelwise errors
-        # centered images have all the same proporttions
-    if debug : print(prop_list)
-
-    # calculate proportions
-    prop_list_order = [1, 2, 3, 4]
-
-    for i in range(0, 3) :
-        for j in range(1, 4) :
-            if prop_list[i] > prop_list[j]:
-                temp = prop_list[i]
-                prop_list[i] = prop_list[j]
-                prop_list[j] = temp
-
-    if debug: print(prop_list_order)
-
-    return prop_list, prop_list_order
 
 
 def display_analysis(img, rot_deg, output = False, orig_img = None, app = False):
@@ -279,42 +95,72 @@ def display_analysis(img, rot_deg, output = False, orig_img = None, app = False)
     else:
         img = img_orig
 
-def correct_img(img, centering_vector, rotation = 0, threshold = 20, resize_ratio = 1, template = None, debug = True, app = False):
+def correct_img(img, centering_vector, rotation = 0, threshold = 20, resize_ratio = 1,
+                template = None, debug = True, app = False,
+                checklist = ['Contrast', 'Center', 'Align', 'Orientate', 'Size']):
     """ performs image corrections such as correction and resizing """
 
     if app : debug = False
 
     # contrast stretching
-    img_contrast = contrast_stretching(img, debug = debug)
+    if "Contrast" in checklist:
+        img_contrast = contrast_stretching(img, debug = debug)
+    else:
+        img_contrast = img.copy()
 
     # recenter image
-    img_centered = move_segment(img_contrast, vector = centering_vector, debug = debug)
+    if "Center" in checklist:
+        img_centered = move_segment(img_contrast, vector = centering_vector, debug = debug)
+    else:
+        img_centered = img_contrast.copy()
 
     # align image
-    img_rotated = rotate(img_centered, rotation, debug = debug)
+    if "Align" in checklist:
+        img_rotated = rotate(img_centered, rotation, debug = debug)
+    else:
+        img_rotated = img_centered.copy()
+
 
     # conform to template
     try:
         # contrast stretch template
-        template_cs = contrast_stretching(template, debug = debug)
+        template_cs = contrast_stretching(template, debug = False)
 
-        # get need for orientation correction
-        needs_rot = needs_rotation(template_cs, img_rotated)
+        if "Orientate" in checklist:
+            # main axis correction
+            needs_rot = needs_rotation(template_cs, img_rotated)
 
-        if needs_rotation != 0 :
-            img_rotated = rotate(img_rotated, 90 * needs_rot, debug = debug)
-            if debug : print("Image rotated", 90 * needs_rot, "degrees")
+            if needs_rotation != 0 :
+                img_rotated = rotate(img_rotated, 90 * needs_rot, debug = debug)
+                if debug : print("Image rotated", 90 * needs_rot, "degrees")
+
+            # image orientation correction
+            img_orientated = orientate(img_rotated, template_cs, debug = debug)
+            # FIXME fails because template also needs recentering
+
+        else:
+            img_orientated = img_rotated.copy()
+            needs_rot = 0
 
         # make object the same size as reference object
-        resize_ratio = get_ratio(template_cs, img_rotated, threshold = 20, debug = debug)
-        if debug :
-            print("Image Ratio", resize_ratio)
 
-        img_final = resize_img(img_rotated, ratio = resize_ratio,
-                            dim_target = (template.shape[1], template.shape[0]),
-                            crop = True, debug = debug)
-    except:
+        if "Size" in checklist:
+            resize_ratio = get_ratio(template_cs, img_orientated, threshold = 20, debug = debug)
+            if debug :
+                print("Image Ratio", resize_ratio)
+
+            img_final = resize_img(img_orientated, ratio = resize_ratio,
+                                dim_target = (template.shape[1], template.shape[0]),
+                                crop = True, debug = debug)
+        else:
+            img_final = img_orientated.copy()
+
+    except Exception as e:
         print("Template not used.")
+
+        if debug:
+            print(e)
+
         img_final = img_rotated.copy()
         needs_rot = 0
 
@@ -346,8 +192,7 @@ if __name__ == "__main__":
     debug = True
 
     # define parameters
-    rotation = 80 # FIXME on synthetic example rotation=]0-2, 20, 160-170]º returns rot_deg=180-theta, why??
-                  # FIXME on real example is misaligned by two degrees, and it is often is 180 - theta
+    rotation = 80
 
     # set run type
     use_synthetic_example = False
@@ -381,15 +226,17 @@ if __name__ == "__main__":
     contour = find_best_contour(img)
 
     # calculate axis
-    find_n_axis(img, contour)
+    _, contour_analysis = find_n_axis(img.copy(), contour, debug = True)
+    show_img(contour_analysis, "Contour Analysis")
 
     # calculate orientation and offset
     rot_deg, c_vector = find_orientation(orig_img, debug = debug)
 
-
     # display rotation and result
     if debug :
         display_analysis(img, rot_deg)
+
+    # if "Fill" in checklist:
 
     # display corrected image
     img_final, needs_rot = correct_img(orig_img, c_vector, -rot_deg, template = template)
@@ -398,17 +245,12 @@ if __name__ == "__main__":
     # close all OpenCV windows
     cv.destroyAllWindows()
 
-    ############## tests #############
+    ############## tests ############# FIXME Up to date with recent orientation function addition
 
     # confirm PCA provided angles
-    assert np.abs(rotation - rot_deg + needs_rot) < 3 or np.abs(180 - rotation - rot_deg + needs_rot) < 3 ,\
-        print(f"\n ERROR: PCA detected rotation, {rot_deg} is different from provided rotation {rotation} or {180+rotation}")
-        # algo cannot yet recognize direction
+    # assert np.abs(rotation - rot_deg + needs_rot) < 3 or np.abs(180 - rotation - rot_deg + needs_rot) < 3 ,\
+    #     print(f"\n ERROR: PCA detected rotation, {rot_deg} is different from provided rotation {rotation} or {180+rotation}")
 
-
-    # TODO feed to ImageNet and classify
-    # TODO compare classification of aligned images to original images classification
-    # TODO catalog z-axis orientation through classification
 
 #######################################################################################################
 ###                                          Referrences                                            ###
